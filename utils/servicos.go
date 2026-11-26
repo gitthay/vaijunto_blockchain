@@ -210,16 +210,18 @@ func ConsolidarTrechos(trechos []ArestaTrecho) []ArestaTrecho {
 	return consolidados
 }
 
-// persistencia de caronas e isolamento por instancia de empresa (apenas os 3 arquivos originais + chave do validador)
+// persistencia de caronas e isolamento por instancia de empresa (arquivos locais + identidade e blockchain do nó)
 var (
-	EmpresaAtualID       = "vaijunto"
-	ServidorAtualURL     = "http://localhost:9080"
-	ArquivoCaronas       = "caronas.json"
-	ArquivoReservas      = "reservas.json"
-	mu                   sync.Mutex // Evita conflito de concorrência entre goroutines do servidor
-	ArquivoUsuarios      = "usuarios.json"
+	EmpresaAtualID        = "vaijunto"
+	ServidorAtualURL      = "http://localhost:9080"
+	ArquivoCaronas        = "caronas.json"
+	ArquivoReservas       = "reservas.json"
+	mu                    sync.Mutex // Evita conflito de concorrência entre goroutines do servidor
+	ArquivoUsuarios       = "usuarios.json"
 	ArquivoChaveValidador = "validador_key.json"
-	CarteiraValidador    *blockchain.Carteira
+	ArquivoBlockchain     = "blockchain.json"
+	CarteiraValidador     *blockchain.Carteira
+	CadeiaLocal           *blockchain.Blockchain
 )
 
 // ConfigurarInstancia define a identidade da empresa e cria APENAS a pasta e os arquivos JSON
@@ -242,6 +244,7 @@ func ConfigurarInstancia(empresaID, servidorURL string) error {
 		ArquivoUsuarios = filepath.Join(pasta, "usuarios.json")
 		ArquivoLog = filepath.Join(pasta, "servidor.log")
 		ArquivoChaveValidador = filepath.Join(pasta, "validador_key.json")
+		ArquivoBlockchain = filepath.Join(pasta, "blockchain.json")
 	}
 
 	// Carrega ou gera o par de chaves Ed25519 do nó validador desta empresa
@@ -250,6 +253,13 @@ func ConfigurarInstancia(empresaID, servidorURL string) error {
 		return fmt.Errorf("erro ao inicializar identidade criptográfica do validador: %w", err)
 	}
 	CarteiraValidador = carteira
+
+	// Inicializa ou carrega a blockchain isolada desta empresa (validando toda a cadeia no boot)
+	cadeia, err := blockchain.NovaBlockchain(ArquivoBlockchain)
+	if err != nil {
+		return fmt.Errorf("erro ao inicializar blockchain local: %w", err)
+	}
+	CadeiaLocal = cadeia
 
 	// Garante que os 3 arquivos JSON desta instância existam imediatamente ao subir o servidor
 	for _, arq := range []string{ArquivoCaronas, ArquivoReservas, ArquivoUsuarios} {

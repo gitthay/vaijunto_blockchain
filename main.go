@@ -382,6 +382,11 @@ func main() {
 		fmt.Printf("Identidade Criptográfica do Validador [%s]: Endereço %s\n",
 			utils.EmpresaAtualID, utils.CarteiraValidador.Endereco)
 	}
+	if utils.CadeiaLocal != nil {
+		topo := utils.CadeiaLocal.UltimoBloco()
+		fmt.Printf("Blockchain Local [%s]: %d bloco(s) | Topo #%d (Hash: %.16s...)\n",
+			utils.EmpresaAtualID, utils.CadeiaLocal.Altura(), topo.Indice, topo.Hash)
+	}
 
 	for {
 		conn, err := ln.Accept()
