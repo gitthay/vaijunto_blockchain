@@ -1,0 +1,48 @@
+services:
+  empresaA:
+    build: .
+    image: vaijunto-servidor:latest
+    container_name: vaijunto_empresa_a
+    command:
+      - "-id=empresaA"
+      - "-tcp=:8081"
+      - "-http=:9081"
+      - "-url=http://${IP_A:-empresaA}:9081"
+      - "-peers=http://${IP_B:-empresaB}:9082,http://${IP_C:-empresaC}:9083"
+    ports:
+      - "8081:8081"
+      - "9081:9081"
+    volumes:
+      - ./dados/empresaA:/app/dados/empresaA
+
+  empresaB:
+    build: .
+    image: vaijunto-servidor:latest
+    container_name: vaijunto_empresa_b
+    command:
+      - "-id=empresaB"
+      - "-tcp=:8082"
+      - "-http=:9082"
+      - "-url=http://${IP_B:-empresaB}:9082"
+      - "-peers=http://${IP_A:-empresaA}:9081,http://${IP_C:-empresaC}:9083"
+    ports:
+      - "8082:8082"
+      - "9082:9082"
+    volumes:
+      - ./dados/empresaB:/app/dados/empresaB
+
+  empresaC:
+    build: .
+    image: vaijunto-servidor:latest
+    container_name: vaijunto_empresa_c
+    command:
+      - "-id=empresaC"
+      - "-tcp=:8083"
+      - "-http=:9083"
+      - "-url=http://${IP_C:-empresaC}:9083"
+      - "-peers=http://${IP_A:-empresaA}:9081,http://${IP_B:-empresaB}:9082"
+    ports:
+      - "8083:8083"
+      - "9083:9083"
+    volumes:
+      - ./dados/empresaC:/app/dados/empresaC
