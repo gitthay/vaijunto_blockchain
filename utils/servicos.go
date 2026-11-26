@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"vaiJunto/blockchain"
 )
 
 // formata a data para leitura (ex: "25/12/2026")
@@ -208,14 +210,16 @@ func ConsolidarTrechos(trechos []ArestaTrecho) []ArestaTrecho {
 	return consolidados
 }
 
-// persistencia de caronas e isolamento por instancia de empresa (apenas os 3 arquivos originais)
+// persistencia de caronas e isolamento por instancia de empresa (apenas os 3 arquivos originais + chave do validador)
 var (
-	EmpresaAtualID   = "vaijunto"
-	ServidorAtualURL = "http://localhost:9080"
-	ArquivoCaronas   = "caronas.json"
-	ArquivoReservas  = "reservas.json"
-	mu               sync.Mutex // Evita conflito de concorrência entre goroutines do servidor
-	ArquivoUsuarios  = "usuarios.json"
+	EmpresaAtualID       = "vaijunto"
+	ServidorAtualURL     = "http://localhost:9080"
+	ArquivoCaronas       = "caronas.json"
+	ArquivoReservas      = "reservas.json"
+	mu                   sync.Mutex // Evita conflito de concorrência entre goroutines do servidor
+	ArquivoUsuarios      = "usuarios.json"
+	ArquivoChaveValidador = "validador_key.json"
+	CarteiraValidador    *blockchain.Carteira
 )
 
 // ConfigurarInstancia define a identidade da empresa e cria APENAS a pasta e os arquivos JSON
@@ -237,7 +241,15 @@ func ConfigurarInstancia(empresaID, servidorURL string) error {
 		ArquivoReservas = filepath.Join(pasta, "reservas.json")
 		ArquivoUsuarios = filepath.Join(pasta, "usuarios.json")
 		ArquivoLog = filepath.Join(pasta, "servidor.log")
+		ArquivoChaveValidador = filepath.Join(pasta, "validador_key.json")
 	}
+
+	// Carrega ou gera o par de chaves Ed25519 do nó validador desta empresa
+	carteira, err := blockchain.CarregarOuCriarCarteiraArquivo(ArquivoChaveValidador)
+	if err != nil {
+		return fmt.Errorf("erro ao inicializar identidade criptográfica do validador: %w", err)
+	}
+	CarteiraValidador = carteira
 
 	// Garante que os 3 arquivos JSON desta instância existam imediatamente ao subir o servidor
 	for _, arq := range []string{ArquivoCaronas, ArquivoReservas, ArquivoUsuarios} {
@@ -746,8 +758,15 @@ func ConsultarPassageirosCarona(caronaID, motoristaID string) ([]string, error) 
 	return lista, nil
 }
 
-// valida a senha do usuário ou cria um novo registro se não existir
+// valida a senha do usuário ou cria um novo registro se não existir (mantendo compatibilidade com clientes sem chave)
 func AutenticarOuCadastrarUsuario(email, senha string, tipo TipoUsuario) (bool, string, error) {
+	sucesso, msg, _, err := AutenticarOuCadastrarUsuarioComChave(email, senha, tipo, "")
+	return sucesso, msg, err
+}
+
+// AutenticarOuCadastrarUsuarioComChave autentica ou cadastra um usuário vinculando sua chave pública Ed25519
+// e derivando seu endereço criptográfico único na rede do consórcio.
+func AutenticarOuCadastrarUsuarioComChave(email, senha string, tipo TipoUsuario, chavePublicaHex string) (bool, string, *Usuario, error) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -761,34 +780,82 @@ func AutenticarOuCadastrarUsuario(email, senha string, tipo TipoUsuario) (bool, 
 		}
 	}
 
+	chavePublicaHex = strings.TrimSpace(chavePublicaHex)
+	var enderecoInformado string
+	if chavePublicaHex != "" {
+		end, err := blockchain.DerivarEndereco(chavePublicaHex)
+		if err != nil {
+			return false, "Chave pública Ed25519 inválida.", nil, err
+		}
+		enderecoInformado = end
+	}
+
 	// Procura o usuário cadastrado
-	for _, u := range usuarios {
-		if u.Email == email {
-			if u.Senha == senha {
-				return true, "Autenticação realizada com sucesso!", nil
+	for i := range usuarios {
+		if usuarios[i].Email == email {
+			if usuarios[i].Senha != senha {
+				return false, "Senha incorreta.", nil, nil
 			}
-			return false, "Senha incorreta.", nil
+			// Se o usuário já existe sem chave e agora enviou chave pública, vincula uma única vez
+			if usuarios[i].ChavePublica == "" && chavePublicaHex != "" {
+				usuarios[i].ChavePublica = chavePublicaHex
+				usuarios[i].Endereco = enderecoInformado
+				if dadosUsuarios, err := json.MarshalIndent(usuarios, "", "  "); err == nil {
+					_ = os.WriteFile(ArquivoUsuarios, dadosUsuarios, 0644)
+				}
+			} else if usuarios[i].ChavePublica != "" && chavePublicaHex != "" && usuarios[i].ChavePublica != chavePublicaHex {
+				return false, "Chave pública não corresponde à identidade cadastrada para este usuário.", nil, nil
+			}
+			u := usuarios[i]
+			return true, "Autenticação realizada com sucesso!", &u, nil
 		}
 	}
 
 	// se não encontrou, realiza o cadastro automático no primeiro acesso
 	novoUsuario := Usuario{
-		Email: email,
-		Senha: senha,
-		Tipo:  tipo,
+		Email:        email,
+		Senha:        senha,
+		Tipo:         tipo,
+		Endereco:     enderecoInformado,
+		ChavePublica: chavePublicaHex,
 	}
 
 	usuarios = append(usuarios, novoUsuario)
 	dadosUsuarios, err := json.MarshalIndent(usuarios, "", "  ")
 	if err != nil {
-		return false, "Erro ao processar dados do usuário.", err
+		return false, "Erro ao processar dados do usuário.", nil, err
 	}
 
 	if err := os.WriteFile(ArquivoUsuarios, dadosUsuarios, 0644); err != nil {
-		return false, "Erro ao salvar arquivo de usuários.", err
+		return false, "Erro ao salvar arquivo de usuários.", nil, err
 	}
 
-	return true, "Usuário cadastrado e autenticado com sucesso!", nil
+	return true, "Usuário cadastrado e autenticado com sucesso!", &novoUsuario, nil
+}
+
+// ObterUsuarioPorEmail retorna os dados públicos/cadastro local de um usuário pelo e-mail.
+func ObterUsuarioPorEmail(email string) (*Usuario, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if _, err := os.Stat(ArquivoUsuarios); os.IsNotExist(err) {
+		return nil, fmt.Errorf("usuário %s não encontrado", email)
+	}
+	dados, err := os.ReadFile(ArquivoUsuarios)
+	if err != nil {
+		return nil, err
+	}
+	var usuarios []Usuario
+	if err := json.Unmarshal(dados, &usuarios); err != nil {
+		return nil, err
+	}
+	for i := range usuarios {
+		if usuarios[i].Email == email {
+			u := usuarios[i]
+			return &u, nil
+		}
+	}
+	return nil, fmt.Errorf("usuário %s não encontrado", email)
 }
 
 var (

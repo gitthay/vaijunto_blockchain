@@ -234,9 +234,10 @@ func processarRequisicaoNaFila(req utils.MensagemRequisicao) ResultadoRequisicao
 
 	case utils.AcaoAutenticar:
 		var reqAuth struct {
-			Email string            `json:"email"`
-			Senha string            `json:"senha"`
-			Tipo  utils.TipoUsuario `json:"tipo"`
+			Email        string            `json:"email"`
+			Senha        string            `json:"senha"`
+			Tipo         utils.TipoUsuario `json:"tipo"`
+			ChavePublica string            `json:"chave_publica,omitempty"`
 		}
 
 		if err := json.Unmarshal(req.Payload, &reqAuth); err != nil {
@@ -254,7 +255,7 @@ func processarRequisicaoNaFila(req utils.MensagemRequisicao) ResultadoRequisicao
 			}
 		}
 
-		sucesso, msg, err := utils.AutenticarOuCadastrarUsuario(reqAuth.Email, reqAuth.Senha, reqAuth.Tipo)
+		sucesso, msg, usuario, err := utils.AutenticarOuCadastrarUsuarioComChave(reqAuth.Email, reqAuth.Senha, reqAuth.Tipo, reqAuth.ChavePublica)
 		if err != nil || !sucesso {
 			utils.RemoverLogin(reqAuth.Email)
 			return ResultadoRequisicao{
@@ -262,8 +263,19 @@ func processarRequisicaoNaFila(req utils.MensagemRequisicao) ResultadoRequisicao
 			}
 		}
 
+		var payloadResp json.RawMessage
+		if usuario != nil && usuario.Endereco != "" {
+			payloadResp, _ = json.Marshal(struct {
+				Endereco     string `json:"endereco"`
+				ChavePublica string `json:"chave_publica"`
+			}{
+				Endereco:     usuario.Endereco,
+				ChavePublica: usuario.ChavePublica,
+			})
+		}
+
 		return ResultadoRequisicao{
-			Resposta:          utils.MensagemResposta{Sucesso: true, Mensagem: msg},
+			Resposta:          utils.MensagemResposta{Sucesso: true, Mensagem: msg, Payload: payloadResp},
 			NovoUsuarioLogado: reqAuth.Email,
 		}
 
@@ -366,6 +378,10 @@ func main() {
 
 	fmt.Printf("Servidor da empresa [%s] rodando na porta TCP %s | API REST Consórcio em %s (Peers: %s)\n",
 		utils.EmpresaAtualID, *portaTCP, utils.ServidorAtualURL, *peers)
+	if utils.CarteiraValidador != nil {
+		fmt.Printf("Identidade Criptográfica do Validador [%s]: Endereço %s\n",
+			utils.EmpresaAtualID, utils.CarteiraValidador.Endereco)
+	}
 
 	for {
 		conn, err := ln.Accept()

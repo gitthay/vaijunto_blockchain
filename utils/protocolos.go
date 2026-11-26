@@ -96,9 +96,11 @@ const (
 )
 
 type Usuario struct {
-	Email string      `json:"email"`
-	Senha string      `json:"senha"`
-	Tipo  TipoUsuario `json:"tipo"`
+	Email        string      `json:"email"`
+	Senha        string      `json:"senha"`
+	Tipo         TipoUsuario `json:"tipo"`
+	Endereco     string      `json:"endereco,omitempty"`
+	ChavePublica string      `json:"chave_publica,omitempty"`
 }
 
 // envelope de dados enviado pelo Cliente ao Servidor.
