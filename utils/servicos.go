@@ -234,8 +234,9 @@ func ConfigurarInstancia(empresaID, servidorURL string) error {
 		ServidorAtualURL = strings.TrimRight(servidorURL, "/")
 	}
 
-	if empresaID != "" && empresaID != "default" {
-		pasta := filepath.Join("dados", empresaID)
+	// Toda empresa (inclusive "default") grava seus JSONs em dados/<empresa>/
+	{
+		pasta := filepath.Join("dados", EmpresaAtualID)
 		if err := os.MkdirAll(pasta, 0755); err != nil {
 			return err
 		}
@@ -244,7 +245,7 @@ func ConfigurarInstancia(empresaID, servidorURL string) error {
 		ArquivoUsuarios = filepath.Join(pasta, "usuarios.json")
 		ArquivoLog = filepath.Join(pasta, "servidor.log")
 		ArquivoChaveValidador = filepath.Join(pasta, "validador_key.json")
-		ArquivoBlockchain = filepath.Join(pasta, "blockchain.json")
+		ArquivoBlockchain = filepath.Join(pasta, "blockchain.json") // estado.json fica ao lado
 	}
 
 	// Carrega ou gera o par de chaves Ed25519 do nó validador desta empresa
@@ -255,7 +256,15 @@ func ConfigurarInstancia(empresaID, servidorURL string) error {
 	CarteiraValidador = carteira
 
 	// Inicializa ou carrega a blockchain isolada desta empresa (validando toda a cadeia no boot)
-	cadeia, err := blockchain.NovaBlockchain(ArquivoBlockchain)
+	// Emissores autorizados de tokens: o próprio validador + endereços extras em VJ_EMISSORES
+	// (separados por vírgula). Todas as empresas devem usar o MESMO conjunto para terem o mesmo estado.
+	emissores := []string{carteira.Endereco}
+	for _, e := range strings.Split(os.Getenv("VJ_EMISSORES"), ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			emissores = append(emissores, e)
+		}
+	}
+	cadeia, err := blockchain.NovaBlockchainComEstado(ArquivoBlockchain, emissores...)
 	if err != nil {
 		return fmt.Errorf("erro ao inicializar blockchain local: %w", err)
 	}
@@ -336,9 +345,9 @@ func CarregarReservas() ([]Reserva, error) {
 }
 
 // FiltrarReservaParaArmazenamentoLocal descentraliza os dados da reserva:
-// - Para trechos pertencentes a ESTE servidor (ServidorAtualURL), preenche/mantém os detalhes completos locais.
-// - Para trechos pertencentes a OUTROS servidores participantes, armazena APENAS as informações de referência
-//   (CaronaID, EmpresaID, ServidorURL, Origem, Destino), obrigando a consulta via rede quando detalhes forem solicitados.
+//   - Para trechos pertencentes a ESTE servidor (ServidorAtualURL), preenche/mantém os detalhes completos locais.
+//   - Para trechos pertencentes a OUTROS servidores participantes, armazena APENAS as informações de referência
+//     (CaronaID, EmpresaID, ServidorURL, Origem, Destino), obrigando a consulta via rede quando detalhes forem solicitados.
 func FiltrarReservaParaArmazenamentoLocal(r Reserva) Reserva {
 	copia := r
 	copia.Itinerario = make([]ArestaTrecho, len(r.Itinerario))

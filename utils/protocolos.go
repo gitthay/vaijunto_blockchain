@@ -78,13 +78,13 @@ type TipoAcao string
 
 const (
 	AcaoAutenticar                 TipoAcao = "AUTENTICAR"
-	AcaoPublicarCarona             TipoAcao = "PUBLICAR_CARONA"             //feito
-	AcaoConsultarCaronas           TipoAcao = "CONSULTAR_CARONAS"           //feito
-	AcaoCancelarCarona             TipoAcao = "CANCELAR_CARONA"             //feito
-	AcaoBuscarItinerario           TipoAcao = "BUSCAR_ITINERARIO"           //feito
-	AcaoReservarTrecho             TipoAcao = "RESERVAR_TRECHO"             //feito
-	AcaoListarReservas             TipoAcao = "LISTAR_RESERVAS"             // feito
-	AcaoCancelarReserva            TipoAcao = "CANCELAR_RESERVA"            //feito
+	AcaoPublicarCarona             TipoAcao = "PUBLICAR_CARONA"   //feito
+	AcaoConsultarCaronas           TipoAcao = "CONSULTAR_CARONAS" //feito
+	AcaoCancelarCarona             TipoAcao = "CANCELAR_CARONA"   //feito
+	AcaoBuscarItinerario           TipoAcao = "BUSCAR_ITINERARIO" //feito
+	AcaoReservarTrecho             TipoAcao = "RESERVAR_TRECHO"   //feito
+	AcaoListarReservas             TipoAcao = "LISTAR_RESERVAS"   // feito
+	AcaoCancelarReserva            TipoAcao = "CANCELAR_RESERVA"  //feito
 	AcaoConsultarPassageirosCarona TipoAcao = "CONSULTAR_PASSAGEIROS_CARONA"
 )
 
