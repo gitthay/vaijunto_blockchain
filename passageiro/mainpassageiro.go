@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"vaiJunto/blockchain"
 	"vaiJunto/utils"
 )
 
@@ -76,6 +77,11 @@ func enviarRequisicaoTCP(conexao *net.Conn, serverAddr, email, senha string, req
 		return utils.MensagemResposta{}, false
 	}
 
+	if !respAuthReconexao.Sucesso {
+		_ = novaConn.Close()
+		fmt.Println("[ERRO]:", respAuthReconexao.Mensagem)
+		return utils.MensagemResposta{}, false
+	}
 	// Reenvia a requisição original após reconectar com sucesso
 	if _, err := novaConn.Write(reqBytes); err != nil {
 		_ = novaConn.Close()
@@ -131,7 +137,10 @@ func exibirDetalhesReserva(indice int, r utils.Reserva) {
 	}
 
 	fmt.Printf("\n[%d] ID Reserva: %s | Rota: %s -> %s\n", indice, r.ID, origemGeral, destinoGeral)
-	fmt.Printf("    Partida: %s | Valor Total: R$ %.2f | Trechos: %d\n", dataHoraStr, r.ValorTotal, len(r.Itinerario))
+	if r.Status != "" {
+		fmt.Println("    Status:", r.Status)
+	}
+	fmt.Printf("    Partida: %s | Valor Total: T$ %.2f | Trechos: %d\n", dataHoraStr, r.ValorTotal, len(r.Itinerario))
 
 	for j, t := range r.Itinerario {
 		emp := t.EmpresaID
@@ -142,7 +151,7 @@ func exibirDetalhesReserva(indice int, r utils.Reserva) {
 			fmt.Printf("      Trecho %d [%s]: (Carona ID: %s | Servidor: %s) -> [SERVIDOR OFFLINE - Detalhes indisponíveis no momento]\n",
 				j+1, emp, t.CaronaID, t.ServidorURL)
 		} else {
-			fmt.Printf("      Trecho %d [%s]: %s -> %s (Carona ID: %s | Motorista: %s | Partida: %s | Chegada: %s | R$ %.2f)\n",
+			fmt.Printf("      Trecho %d [%s]: %s -> %s (Carona ID: %s | Motorista: %s | Partida: %s | Chegada: %s | T$ %.2f)\n",
 				j+1, emp, t.Origem, t.Destino, t.CaronaID, t.MotoristaID,
 				t.HorarioPartida.Format("15:04"), t.HorarioChegada.Format("15:04"), t.Preco)
 		}
@@ -175,43 +184,49 @@ func main() {
 	var email, senha string
 	var carteira *utils.Carteira
 	for {
+		fmt.Println("\n1. Entrar\n2. Criar conta\n0. Sair")
+		opcao := lerTexto("Escolha: ")
+		if opcao == "0" {
+			return
+		}
+		if opcao != "1" && opcao != "2" {
+			continue
+		}
 		email = lerTexto("Digite seu Email: ")
 		senha = lerTexto("Digite sua Senha: ")
-
-		// Carteira Ed25519 local: a chave privada fica nesta máquina (pasta carteiras/)
+		if email == "" || senha == "" {
+			fmt.Println("Informe e-mail e senha.")
+			continue
+		}
+		acao := utils.AcaoAutenticar
 		var errCarteira error
-		carteira, errCarteira = utils.CarregarCarteiraDoUsuario(email)
+		if opcao == "2" {
+			if senha != lerTexto("Confirme sua Senha: ") {
+				fmt.Println("Senhas diferentes.")
+				continue
+			}
+			acao = utils.AcaoCadastrar
+			carteira, errCarteira = utils.PrepararCarteiraCadastro(email)
+		} else {
+			carteira, errCarteira = utils.CarregarCarteiraExistente(email)
+		}
 		if errCarteira != nil {
-			fmt.Printf("\n[ERRO]: não foi possível carregar/criar sua carteira: %v\n\n", errCarteira)
+			fmt.Printf("[ERRO] Carteira local indisponível: %v. No login, restaure a carteira original; nenhuma chave será criada.\n", errCarteira)
 			continue
 		}
-
-		payloadAuth, _ := json.Marshal(map[string]interface{}{
-			"email":         email,
-			"senha":         senha,
-			"chave_publica": utils.ChavePublicaDoUsuario(email),
-			"tipo":          utils.TipoPassageiro,
-		})
-
-		reqAuth := utils.MensagemRequisicao{
-			Acao:    utils.AcaoAutenticar,
-			Usuario: email,
-			Payload: payloadAuth,
+		payload, _ := json.Marshal(map[string]interface{}{"email": email, "senha": senha, "chave_publica": carteira.ChavePublica, "tipo": utils.TipoPassageiro})
+		if err := json.NewEncoder(conexao).Encode(utils.MensagemRequisicao{Acao: acao, Usuario: email, Payload: payload}); err != nil {
+			log.Fatal(err)
 		}
-		reqAuthBytes, _ := json.Marshal(reqAuth)
-		_, _ = conexao.Write(reqAuthBytes)
-
-		var respAuth utils.MensagemResposta
-		if err := json.NewDecoder(conexao).Decode(&respAuth); err != nil {
-			log.Fatalln("Erro de comunicação com o servidor (servidor caiu):", err)
+		var resp utils.MensagemResposta
+		if err := json.NewDecoder(conexao).Decode(&resp); err != nil {
+			log.Fatal(err)
 		}
-
-		if !respAuth.Sucesso {
-			fmt.Printf("\n[ERRO]: %s Tente novamente.\n\n", respAuth.Mensagem)
+		if !resp.Sucesso {
+			fmt.Println("[ERRO]:", resp.Mensagem)
 			continue
 		}
-
-		fmt.Println("\n[SUCESSO]:", respAuth.Mensagem)
+		fmt.Println("[SUCESSO]:", resp.Mensagem)
 		break
 	}
 
@@ -219,9 +234,10 @@ func main() {
 	for {
 		fmt.Println("\n------------------------------------------")
 		fmt.Println("1. Buscar/Reservar Caronas")
-		fmt.Println("2. Minhas Reservas Ativas")
+		fmt.Println("2. Minhas Reservas")
 		fmt.Println("3. Cancelar Reserva")
 		fmt.Println("4. Carteira de Tokens")
+		fmt.Println("5. Concluir viagem")
 		fmt.Println("0. Sair")
 		fmt.Println("------------------------------------------")
 
@@ -298,7 +314,7 @@ func main() {
 			}
 
 			for i, itin := range itinerariosEncontrados {
-				fmt.Printf("\nOPÇÃO [%d] - Preço Total: R$ %.2f\n", i+1, itin.PrecoTotal)
+				fmt.Printf("\nOPÇÃO [%d] - Preço Total: T$ %.2f\n", i+1, itin.PrecoTotal)
 				for j, t := range itin.Trechos {
 					emp := t.EmpresaID
 					if emp == "" {
@@ -326,13 +342,36 @@ func main() {
 
 			input := lerTexto("Digite o número da OPÇÃO desejada (ou 0 para cancelar): ")
 			num, err := strconv.Atoi(input)
-			if err != nil || num == 0 || num > len(itinerariosEncontrados) {
+			if err != nil || num <= 0 || num > len(itinerariosEncontrados) {
 				fmt.Println("Reserva não realizada.")
 				continue
 			}
 
 			itinerarioEscolhido := itinerariosEncontrados[num-1]
-			payloadReserva, _ := json.Marshal(itinerarioEscolhido)
+			rawCotacao, _ := json.Marshal(itinerarioEscolhido)
+			cot, ok := enviarRequisicaoTCP(&conexao, *serverAddr, email, senha, utils.MensagemRequisicao{Acao: utils.AcaoCotarReserva, Usuario: email, Payload: rawCotacao}, buf)
+			if !ok {
+				continue
+			}
+			if !cot.Sucesso {
+				fmt.Println("[ERRO]", cot.Mensagem)
+				continue
+			}
+			var c utils.CotacaoReserva
+			if json.Unmarshal(cot.Payload, &c) != nil {
+				fmt.Println("Cotação inválida")
+				continue
+			}
+			fmt.Printf("Saldo: %d tokens | Bloqueio: %d tokens\n", c.Saldo, c.Escrow.ValorTotal)
+			if strings.ToLower(lerTexto("Confirmar bloqueio de tokens? (s/n): ")) != "s" {
+				continue
+			}
+			tx, err := blockchain.NovaTransacaoCriarEscrow(carteira, c.Escrow, c.Nonce, time.Now().Unix())
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			payloadReserva, _ := json.Marshal(utils.ReservaComTokens{Itinerario: c.Itinerario, Transacao: tx})
 
 			reqReserva := utils.MensagemRequisicao{Acao: utils.AcaoReservarTrecho, Usuario: email, Payload: payloadReserva}
 			respReserva, ok := enviarRequisicaoTCP(&conexao, *serverAddr, email, senha, reqReserva, buf)
@@ -356,51 +395,51 @@ func main() {
 				exibirDetalhesReserva(i+1, r)
 			}
 
-		case "3":
+		case "3", "5":
 			reservas, ok := buscarReservas(&conexao, *serverAddr, email, senha, buf)
 			if !ok {
 				continue
 			}
-			fmt.Println("\n==========================================")
-			fmt.Println("           CANCELAR RESERVA               ")
-			fmt.Println("==========================================")
-
-			if len(reservas) == 0 {
-				fmt.Println("Você não possui reservas ativas para cancelar.")
-				continue
-			}
-
-			// Lista todas as reservas com detalhes completos (ou status offline do servidor parceiro)
 			for i, r := range reservas {
 				exibirDetalhesReserva(i+1, r)
 			}
-
-			fmt.Println("\n[0] Voltar ao menu")
-
-			input := lerTexto("Escolha o número da reserva para cancelar: ")
-			num, err := strconv.Atoi(input)
-			if err != nil || num == 0 || num > len(reservas) {
+			id := lerTexto("ID da reserva (inclusive escrow pendente; 0 volta): ")
+			if id == "0" || id == "" {
 				continue
 			}
-
-			reservaEscolhida := reservas[num-1]
-
-			// Confirmação antes de enviar o cancelamento
-			confirmacao := lerTexto(fmt.Sprintf("Deseja realmente cancelar a reserva %s? (s/n): ", reservaEscolhida.ID))
-			if strings.ToLower(confirmacao) != "s" {
-				fmt.Println("Operação cancelada.")
+			if strings.ToLower(lerTexto("Confirma a operação? (s/n): ")) != "s" {
 				continue
 			}
-
-			payload, _ := json.Marshal(map[string]string{"reserva_id": reservaEscolhida.ID})
-
-			req := utils.MensagemRequisicao{Acao: utils.AcaoCancelarReserva, Usuario: email, Payload: payload}
-			resp, ok := enviarRequisicaoTCP(&conexao, *serverAddr, email, senha, req, buf)
-			if !ok {
+			if opcao == "5" && strings.ToLower(lerTexto("Confirma que chegou ao destino final? (s/n): ")) != "s" {
 				continue
 			}
-
-			fmt.Println("\n>", resp.Mensagem)
+			resp, ok := enviarRequisicaoTCP(&conexao, *serverAddr, email, senha, utils.MensagemRequisicao{Acao: utils.AcaoSaldoTokens, Usuario: email}, buf)
+			if !ok || !resp.Sucesso {
+				fmt.Println(resp.Mensagem)
+				continue
+			}
+			var saldo utils.RespostaSaldo
+			if json.Unmarshal(resp.Payload, &saldo) != nil {
+				continue
+			}
+			var tx blockchain.Transacao
+			var err error
+			acao := utils.AcaoCancelarReserva
+			if opcao == "5" {
+				acao = utils.AcaoConcluirViagem
+				tx, err = blockchain.NovaTransacaoConcluirViagem(carteira, id, saldo.ProximoNonce, time.Now().Unix())
+			} else {
+				tx, err = blockchain.NovaTransacaoCancelarEscrow(carteira, id, saldo.ProximoNonce, time.Now().Unix())
+			}
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			payload, _ := json.Marshal(tx)
+			resp, ok = enviarRequisicaoTCP(&conexao, *serverAddr, email, senha, utils.MensagemRequisicao{Acao: acao, Usuario: email, Payload: payload}, buf)
+			if ok {
+				fmt.Println(resp.Mensagem)
+			}
 
 		case "4":
 			utils.MenuTokens(email, carteira, func(r utils.MensagemRequisicao) (utils.MensagemResposta, bool) {

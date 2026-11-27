@@ -50,6 +50,7 @@ type Estado struct {
 	saldos    map[string]uint64
 	nonces    map[string]uint64 // último nonce consumido por endereço
 	emissores map[string]bool
+	escrows   map[string]Escrow
 	emitido   uint64 // total de tokens emitidos (oferta total)
 }
 
@@ -57,6 +58,7 @@ type Estado struct {
 // autorizados a assinar transações EMITIR_TOKENS (ex.: validadores do consórcio).
 func NovoEstado(emissores ...string) *Estado {
 	e := &Estado{
+		escrows:   make(map[string]Escrow),
 		saldos:    make(map[string]uint64),
 		nonces:    make(map[string]uint64),
 		emissores: make(map[string]bool, len(emissores)),
@@ -142,15 +144,16 @@ type SnapshotEstado struct {
 	Emissores    []string          `json:"emissores"`
 	Saldos       map[string]uint64 `json:"saldos"`
 	Nonces       map[string]uint64 `json:"nonces"`
+	Escrows      map[string]Escrow `json:"escrows,omitempty"`
 }
 
 // Snapshot retorna uma cópia serializável do estado (altura e hash do topo são preenchidos por quem chama).
 func (e *Estado) Snapshot() SnapshotEstado {
-	raiz := e.Raiz()
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	snap := SnapshotEstado{
-		RaizEstado:   raiz,
+		RaizEstado:   e.raizSemLock(),
+		Escrows:      copiarEscrows(e.escrows),
 		TotalEmitido: e.emitido,
 		Emissores:    make([]string, 0, len(e.emissores)),
 		Saldos:       make(map[string]uint64, len(e.saldos)),
@@ -175,7 +178,10 @@ func (e *Estado) Snapshot() SnapshotEstado {
 func (e *Estado) Raiz() string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	return e.raizSemLock()
+}
 
+func (e *Estado) raizSemLock() string {
 	enderecos := make(map[string]struct{}, len(e.saldos)+len(e.nonces))
 	for k := range e.saldos {
 		enderecos[k] = struct{}{}
@@ -194,6 +200,10 @@ func (e *Estado) Raiz() string {
 	for _, k := range ordenados {
 		fmt.Fprintf(&buf, "%s|%d|%d\n", k, e.saldos[k], e.nonces[k])
 	}
+	if len(e.escrows) > 0 {
+		dados, _ := json.Marshal(e.escrows)
+		buf.Write(dados)
+	}
 	return HashSHA256Hex(buf.Bytes())
 }
 
@@ -208,11 +218,13 @@ type visaoEstado struct {
 	saldos  map[string]uint64
 	nonces  map[string]uint64
 	emitido uint64
+	escrows map[string]Escrow
 }
 
 func novaVisao(base *Estado) *visaoEstado {
 	return &visaoEstado{
 		base:    base,
+		escrows: make(map[string]Escrow),
 		saldos:  make(map[string]uint64),
 		nonces:  make(map[string]uint64),
 		emitido: base.emitido,
@@ -288,6 +300,10 @@ func (v *visaoEstado) aplicar(tx Transacao) error {
 		v.saldos[tx.Remetente] = saldoOrigem - p.Valor
 		v.saldos[p.Destinatario] = novoDestino
 
+	case TxCriarEscrow, TxConcluirViagem, TxCancelarReserva:
+		if err := v.aplicarEscrow(tx); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("%w: %s", ErrTipoNaoSuportado, tx.Tipo)
 	}
@@ -302,6 +318,9 @@ func (v *visaoEstado) confirmar() {
 	}
 	for k, n := range v.nonces {
 		v.base.nonces[k] = n
+	}
+	for k, escrow := range v.escrows {
+		v.base.escrows[k] = escrow
 	}
 	v.base.emitido = v.emitido
 }

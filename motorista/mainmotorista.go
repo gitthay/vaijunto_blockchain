@@ -76,6 +76,11 @@ func enviarRequisicaoTCP(conexao *net.Conn, serverAddr, email, senha string, req
 		return utils.MensagemResposta{}, false
 	}
 
+	if !respAuthReconexao.Sucesso {
+		_ = novaConn.Close()
+		fmt.Println("[ERRO]:", respAuthReconexao.Mensagem)
+		return utils.MensagemResposta{}, false
+	}
 	// Reenvia a requisição original após reconectar com sucesso
 	if _, err := novaConn.Write(reqBytes); err != nil {
 		_ = novaConn.Close()
@@ -147,43 +152,49 @@ func main() {
 	var email, senha string
 	var carteira *utils.Carteira
 	for {
+		fmt.Println("\n1. Entrar\n2. Criar conta\n0. Sair")
+		opcao := lerTexto("Escolha: ")
+		if opcao == "0" {
+			return
+		}
+		if opcao != "1" && opcao != "2" {
+			continue
+		}
 		email = lerTexto("Digite seu Email: ")
 		senha = lerTexto("Digite sua Senha: ")
-
-		// Carteira Ed25519 local: a chave privada fica nesta máquina (pasta carteiras/)
+		if email == "" || senha == "" {
+			fmt.Println("Informe e-mail e senha.")
+			continue
+		}
+		acao := utils.AcaoAutenticar
 		var errCarteira error
-		carteira, errCarteira = utils.CarregarCarteiraDoUsuario(email)
+		if opcao == "2" {
+			if senha != lerTexto("Confirme sua Senha: ") {
+				fmt.Println("Senhas diferentes.")
+				continue
+			}
+			acao = utils.AcaoCadastrar
+			carteira, errCarteira = utils.PrepararCarteiraCadastro(email)
+		} else {
+			carteira, errCarteira = utils.CarregarCarteiraExistente(email)
+		}
 		if errCarteira != nil {
-			fmt.Printf("\n[ERRO]: não foi possível carregar/criar sua carteira: %v\n\n", errCarteira)
+			fmt.Printf("[ERRO] Carteira local indisponível: %v. No login, restaure a carteira original; nenhuma chave será criada.\n", errCarteira)
 			continue
 		}
-
-		payloadAuth, _ := json.Marshal(map[string]interface{}{
-			"email":         email,
-			"senha":         senha,
-			"chave_publica": utils.ChavePublicaDoUsuario(email),
-			"tipo":          utils.TipoMotorista,
-		})
-
-		reqAuth := utils.MensagemRequisicao{
-			Acao:    utils.AcaoAutenticar,
-			Usuario: email,
-			Payload: payloadAuth,
+		payload, _ := json.Marshal(map[string]interface{}{"email": email, "senha": senha, "chave_publica": carteira.ChavePublica, "tipo": utils.TipoMotorista})
+		if err := json.NewEncoder(conexao).Encode(utils.MensagemRequisicao{Acao: acao, Usuario: email, Payload: payload}); err != nil {
+			log.Fatal(err)
 		}
-		reqAuthBytes, _ := json.Marshal(reqAuth)
-		_, _ = conexao.Write(reqAuthBytes)
-
-		var respAuth utils.MensagemResposta
-		if err := json.NewDecoder(conexao).Decode(&respAuth); err != nil {
-			log.Fatalln("Erro de comunicação com o servidor (servidor caiu):", err)
+		var resp utils.MensagemResposta
+		if err := json.NewDecoder(conexao).Decode(&resp); err != nil {
+			log.Fatal(err)
 		}
-
-		if !respAuth.Sucesso {
-			fmt.Printf("\n[ERRO]: %s Tente novamente.\n\n", respAuth.Mensagem)
+		if !resp.Sucesso {
+			fmt.Println("[ERRO]:", resp.Mensagem)
 			continue
 		}
-
-		fmt.Println("\n[SUCESSO]:", respAuth.Mensagem)
+		fmt.Println("[SUCESSO]:", resp.Mensagem)
 		break
 	}
 
@@ -366,15 +377,15 @@ func main() {
 				// Preço
 				var preco float64
 				for {
-					precoStr := lerTexto("Preço deste trecho (R$): ")
+					precoStr := lerTexto("Preço deste trecho (T$): ")
 					if precoStr == "0" {
 						cancelarCadastro = true
 						break
 					}
 
 					p, err := strconv.ParseFloat(strings.ReplaceAll(precoStr, ",", "."), 64)
-					if err != nil || p <= 0 {
-						fmt.Println("[ERRO]: Preço inválido. Digite um valor positivo numérico. Tente novamente.")
+					if err != nil || p <= 0 || p >= 1<<53 || p != float64(uint64(p)) {
+						fmt.Println("[ERRO]: Preço inválido. Digite uma quantidade inteira positiva de tokens. Tente novamente.")
 						continue
 					}
 					preco = p
@@ -459,7 +470,7 @@ func main() {
 					fmt.Printf("\n[%d] ID: %s | Assentos Totais: %d\n", i+1, c.ID, c.AssentosTot)
 					fmt.Println("  Trechos:")
 					for idx, t := range c.Trechos {
-						fmt.Printf("    Trecho %d: %s -> %s | Data: %s | Horário: %s às %s | Preço: R$ %.2f | Assentos Livres: %d\n",
+						fmt.Printf("    Trecho %d: %s -> %s | Data: %s | Horário: %s às %s | Preço: T$ %.2f | Assentos Livres: %d\n",
 							idx+1, t.Origem, t.Destino, t.DataPartida.String(),
 							t.HorarioPartida.Format("15:04"), t.HorarioChegada.Format("15:04"),
 							t.Preco, t.AssentosLivre)
@@ -476,7 +487,7 @@ func main() {
 					fmt.Printf("\n[%d] ID: %s | Assentos Totais: %d\n", i+1, c.ID, c.AssentosTot)
 					fmt.Println("  Trechos:")
 					for idx, t := range c.Trechos {
-						fmt.Printf("    Trecho %d: %s -> %s | Data: %s | Horário: %s às %s | Preço: R$ %.2f\n",
+						fmt.Printf("    Trecho %d: %s -> %s | Data: %s | Horário: %s às %s | Preço: T$ %.2f\n",
 							idx+1, t.Origem, t.Destino, t.DataPartida.String(),
 							t.HorarioPartida.Format("15:04"), t.HorarioChegada.Format("15:04"),
 							t.Preco)

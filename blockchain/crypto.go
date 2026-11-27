@@ -91,23 +91,10 @@ func CarregarOuCriarCarteiraArquivo(caminho string) (*Carteira, error) {
 		return nil, errors.New("caminho da carteira não pode ser vazio")
 	}
 
-	if dados, err := os.ReadFile(caminho); err == nil && len(dados) > 0 {
-		var c Carteira
-		if err := json.Unmarshal(dados, &c); err != nil {
-			return nil, fmt.Errorf("erro ao ler carteira em %s: %w", caminho, err)
-		}
-		enderecoDerivado, err := DerivarEndereco(c.ChavePublica)
-		if err != nil {
-			return nil, fmt.Errorf("chave pública inválida em %s: %w", caminho, err)
-		}
-		if c.Endereco != "" && c.Endereco != enderecoDerivado {
-			return nil, fmt.Errorf("endereço inconsistente na carteira %s", caminho)
-		}
-		c.Endereco = enderecoDerivado
-		if _, err := decodificarChavePrivada(c.ChavePrivada); err != nil {
-			return nil, fmt.Errorf("chave privada inválida em %s: %w", caminho, err)
-		}
-		return &c, nil
+	if c, err := CarregarCarteiraArquivo(caminho); err == nil {
+		return c, nil
+	} else if !os.IsNotExist(err) {
+		return nil, err
 	}
 
 	carteira, err := GerarCarteira()
@@ -127,11 +114,51 @@ func CarregarOuCriarCarteiraArquivo(caminho string) (*Carteira, error) {
 		return nil, err
 	}
 
-	if err := os.WriteFile(caminho, conteudo, 0600); err != nil {
+	f, err := os.OpenFile(caminho, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if os.IsExist(err) {
+		return CarregarCarteiraArquivo(caminho)
+	}
+	if err != nil {
+		return nil, err
+	}
+	_, err = f.Write(conteudo)
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
 		return nil, fmt.Errorf("erro ao salvar carteira em %s: %w", caminho, err)
 	}
 
 	return carteira, nil
+}
+
+// CarregarCarteiraArquivo valida uma carteira existente sem criar ou sobrescrever chaves.
+func CarregarCarteiraArquivo(caminho string) (*Carteira, error) {
+	dados, err := os.ReadFile(caminho)
+	if err != nil {
+		return nil, err
+	}
+	var c Carteira
+	if err := json.Unmarshal(dados, &c); err != nil {
+		return nil, err
+	}
+	end, err := DerivarEndereco(c.ChavePublica)
+	if err != nil {
+		return nil, err
+	}
+	if c.Endereco != "" && c.Endereco != end {
+		return nil, errors.New("endereço inconsistente")
+	}
+	priv, err := decodificarChavePrivada(c.ChavePrivada)
+	if err != nil {
+		return nil, err
+	}
+	if hex.EncodeToString(ed25519.NewKeyFromSeed(priv.Seed()).Public().(ed25519.PublicKey)) != c.ChavePublica || hex.EncodeToString(ed25519.NewKeyFromSeed(priv.Seed())) != c.ChavePrivada {
+		return nil, errors.New("par de chaves inconsistente")
+	}
+	c.Endereco = end
+	return &c, nil
 }
 
 // HashSHA256Hex retorna o resumo criptográfico SHA-256 dos dados em formato hexadecimal.

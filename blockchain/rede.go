@@ -18,6 +18,7 @@ type RedeLedger struct {
 	ID, LiderID, LiderURL, LiderPublica string
 	Carteira                            *Carteira
 	Peers                               []string
+	AutorizarTransacao                  func(Transacao) error
 	mu                                  sync.Mutex
 	cliente                             *http.Client
 }
@@ -109,7 +110,7 @@ func (r *RedeLedger) enviar(tx Transacao) (ResultadoTransferencia, error) {
 	if err := tx.ValidarAssinatura(); err != nil {
 		return ResultadoTransferencia{}, err
 	}
-	if tx.Tipo != TxTransferirTokens && tx.Tipo != TxEmitirTokens {
+	if tx.Tipo != TxTransferirTokens && tx.Tipo != TxEmitirTokens && tx.Tipo != TxCriarEscrow && tx.Tipo != TxConcluirViagem && tx.Tipo != TxCancelarReserva {
 		return ResultadoTransferencia{}, fmt.Errorf("tipo não suportado")
 	}
 	existe := false
@@ -121,6 +122,11 @@ func (r *RedeLedger) enviar(tx Transacao) (ResultadoTransferencia, error) {
 		}
 	}
 	if !existe {
+		if r.AutorizarTransacao != nil {
+			if err := r.AutorizarTransacao(tx); err != nil {
+				return ResultadoTransferencia{}, err
+			}
+		}
 		if err := r.Cadeia.Estado().ValidarTransacao(tx); err != nil {
 			return ResultadoTransferencia{}, err
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -35,9 +36,23 @@ func CarregarCarteiraDoUsuario(email string) (*Carteira, error) {
 	return blockchain.CarregarOuCriarCarteiraArquivo(CaminhoCarteiraUsuario(email))
 }
 
+// CarregarCarteiraExistente nunca cria uma identidade durante o login.
+func CarregarCarteiraExistente(email string) (*Carteira, error) {
+	return blockchain.CarregarCarteiraArquivo(CaminhoCarteiraUsuario(email))
+}
+
+// PrepararCarteiraCadastro reutiliza uma carteira local existente ou cria uma nova.
+func PrepararCarteiraCadastro(email string) (*Carteira, error) {
+	c, err := CarregarCarteiraExistente(email)
+	if err == nil || !os.IsNotExist(err) {
+		return c, err
+	}
+	return CarregarCarteiraDoUsuario(email)
+}
+
 // ChavePublicaDoUsuario retorna a chave pública da carteira do usuário ("" se não for possível carregá-la).
 func ChavePublicaDoUsuario(email string) string {
-	c, err := CarregarCarteiraDoUsuario(email)
+	c, err := CarregarCarteiraExistente(email)
 	if err != nil {
 		return ""
 	}
@@ -169,4 +184,13 @@ func imprimirResultado(resp MensagemResposta) {
 	} else {
 		fmt.Println("\n[ERRO]:", resp.Mensagem)
 	}
+}
+
+// ChavePublicaCadastroSimulador cria carteiras apenas para contas de teste novas.
+func ChavePublicaCadastroSimulador(email string) string {
+	c, err := PrepararCarteiraCadastro(email)
+	if err != nil {
+		return ""
+	}
+	return c.ChavePublica
 }
