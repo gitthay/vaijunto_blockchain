@@ -100,8 +100,19 @@ func processarRequisicaoNaFila(req utils.MensagemRequisicao) ResultadoRequisicao
 			},
 		}
 
+	case utils.AcaoCotarReserva:
+		var it utils.Itinerario
+		if err := json.Unmarshal(req.Payload, &it); err != nil {
+			return ResultadoRequisicao{Resposta: utils.MensagemResposta{Mensagem: "Itinerário inválido"}}
+		}
+		c, err := utils.CotarReservaTokens(req.Usuario, it)
+		if err != nil {
+			return ResultadoRequisicao{Resposta: utils.MensagemResposta{Mensagem: err.Error()}}
+		}
+		raw, _ := json.Marshal(c)
+		return ResultadoRequisicao{Resposta: utils.MensagemResposta{Sucesso: true, Payload: raw}}
 	case utils.AcaoReservarTrecho:
-		var itinerarioDesejado utils.Itinerario
+		var itinerarioDesejado utils.ReservaComTokens
 		if err := json.Unmarshal(req.Payload, &itinerarioDesejado); err != nil {
 			log.Println("Erro ao ler payload da reserva:", err)
 			return ResultadoRequisicao{
@@ -109,7 +120,7 @@ func processarRequisicaoNaFila(req utils.MensagemRequisicao) ResultadoRequisicao
 			}
 		}
 
-		reserva, err := utils.ReservarItinerario(req.Usuario, itinerarioDesejado)
+		reserva, err := utils.ReservarComTokens(req.Usuario, itinerarioDesejado)
 		if err != nil {
 			log.Println("Falha na reserva:", err)
 			return ResultadoRequisicao{
@@ -144,28 +155,8 @@ func processarRequisicaoNaFila(req utils.MensagemRequisicao) ResultadoRequisicao
 			},
 		}
 
-	case utils.AcaoCancelarReserva:
-		var reqCancelamento struct {
-			ReservaID string `json:"reserva_id"`
-		}
-		if err := json.Unmarshal(req.Payload, &reqCancelamento); err != nil {
-			return ResultadoRequisicao{
-				Resposta: utils.MensagemResposta{Sucesso: false, Mensagem: "Payload de cancelamento inválido."},
-			}
-		}
-
-		if err := utils.CancelarReserva(reqCancelamento.ReservaID, req.Usuario); err != nil {
-			return ResultadoRequisicao{
-				Resposta: utils.MensagemResposta{Sucesso: false, Mensagem: err.Error()},
-			}
-		}
-
-		return ResultadoRequisicao{
-			Resposta: utils.MensagemResposta{
-				Sucesso:  true,
-				Mensagem: "Reserva cancelada e assentos liberados com sucesso!",
-			},
-		}
+	case utils.AcaoCancelarReserva, utils.AcaoConcluirViagem:
+		return ResultadoRequisicao{Resposta: utils.OperarEscrowReserva(req)}
 
 	case utils.AcaoConsultarCaronas:
 		caronas, err := utils.ConsultarCaronasMotorista(req.Usuario)
@@ -232,7 +223,7 @@ func processarRequisicaoNaFila(req utils.MensagemRequisicao) ResultadoRequisicao
 			},
 		}
 
-	case utils.AcaoAutenticar:
+	case utils.AcaoAutenticar, utils.AcaoCadastrar:
 		var reqAuth struct {
 			Email        string            `json:"email"`
 			Senha        string            `json:"senha"`
@@ -246,6 +237,9 @@ func processarRequisicaoNaFila(req utils.MensagemRequisicao) ResultadoRequisicao
 			}
 		}
 
+		if reqAuth.Email != req.Usuario {
+			return ResultadoRequisicao{Resposta: utils.MensagemResposta{Mensagem: "Identidade da requisição inválida."}}
+		}
 		if !utils.RegistrarLogin(reqAuth.Email) {
 			return ResultadoRequisicao{
 				Resposta: utils.MensagemResposta{
@@ -255,7 +249,7 @@ func processarRequisicaoNaFila(req utils.MensagemRequisicao) ResultadoRequisicao
 			}
 		}
 
-		sucesso, msg, usuario, err := utils.AutenticarOuCadastrarUsuarioComChave(reqAuth.Email, reqAuth.Senha, reqAuth.Tipo, reqAuth.ChavePublica)
+		sucesso, msg, usuario, err := utils.AutenticarConta(reqAuth.Email, reqAuth.Senha, reqAuth.Tipo, reqAuth.ChavePublica, req.Acao == utils.AcaoCadastrar)
 		if err != nil || !sucesso {
 			utils.RemoverLogin(reqAuth.Email)
 			return ResultadoRequisicao{
@@ -330,9 +324,23 @@ func gerenciarConexao(conexao net.Conn) {
 			return
 		}
 
-		utils.RegistrarLog("[REQUISICAO] De: %s | Usuario: %s | Acao: %s | Payload: %s",
-			clienteAddr, req.Usuario, req.Acao, string(req.Payload))
+		utils.RegistrarLog("[REQUISICAO] De: %s | Usuario: %s | Acao: %s", clienteAddr, req.Usuario, req.Acao)
+		if (req.Acao == utils.AcaoAutenticar || req.Acao == utils.AcaoCadastrar) && usuarioLogadoNestaConexao != "" {
+			if err := codificador.Encode(utils.MensagemResposta{Mensagem: "Sessão já autenticada."}); err != nil {
+				return
+			}
+			continue
+		}
 
+		switch req.Acao {
+		case utils.AcaoCancelarReserva, utils.AcaoConcluirViagem, utils.AcaoCotarReserva, utils.AcaoReservarTrecho, utils.AcaoSaldoTokens, utils.AcaoRecarregarTokens, utils.AcaoTransferirTokens, utils.AcaoConsultarEndereco:
+			if usuarioLogadoNestaConexao == "" || req.Usuario != usuarioLogadoNestaConexao {
+				if err := codificador.Encode(utils.MensagemResposta{Sucesso: false, Mensagem: "Autentique-se antes de operar a carteira."}); err != nil {
+					return
+				}
+				continue
+			}
+		}
 		// Enfileira a requisição no canal (Fila FIFO) e aguarda o Worker processar
 		filaRequisicoes <- TarefaRequisicao{
 			Req:          req,

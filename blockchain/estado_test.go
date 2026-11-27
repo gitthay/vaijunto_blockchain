@@ -197,7 +197,7 @@ func TestPayloadInvalido(t *testing.T) {
 	}
 
 	// Tipo ainda não suportado
-	tx := Transacao{Tipo: TxCriarEscrow, Nonce: 1, Timestamp: tsBase, Payload: json.RawMessage(`{}`)}
+	tx := Transacao{Tipo: TxAvaliar, Nonce: 1, Timestamp: tsBase, Payload: json.RawMessage(`{}`)}
 	_ = tx.Assinar(GerarCarteiraDeterministica("carol"))
 	if err := e.AplicarTransacao(tx); !errors.Is(err, ErrTipoNaoSuportado) {
 		t.Errorf("tipo não suportado deveria ser rejeitado, obtido: %v", err)

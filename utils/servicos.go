@@ -502,6 +502,17 @@ func ListarReservasPassageiro(passageiroID string) ([]Reserva, error) {
 	for _, r := range reservas {
 		if r.PassageiroID == passageiroID {
 			copia := r
+			if CadeiaLocal != nil && CadeiaLocal.Estado() != nil {
+				if x, ok := CadeiaLocal.Estado().Escrow(r.ID); ok {
+					copia.Status = "CONFIRMADA"
+					if x.Concluido {
+						copia.Status = "CONCLUIDA"
+					}
+					if x.Cancelado {
+						copia.Status = "CANCELADA"
+					}
+				}
+			}
 			PreencherDetalhesRemotosReserva(&copia)
 			minhasReservas = append(minhasReservas, copia)
 		}
@@ -786,17 +797,37 @@ func AutenticarOuCadastrarUsuario(email, senha string, tipo TipoUsuario) (bool, 
 // AutenticarOuCadastrarUsuarioComChave autentica ou cadastra um usuário vinculando sua chave pública Ed25519
 // e derivando seu endereço criptográfico único na rede do consórcio.
 func AutenticarOuCadastrarUsuarioComChave(email, senha string, tipo TipoUsuario, chavePublicaHex string) (bool, string, *Usuario, error) {
+	return autenticarModo(email, senha, tipo, chavePublicaHex, "legado")
+}
+
+// AutenticarConta separa cadastro e login sob o mesmo lock de usuários.
+func AutenticarConta(email, senha string, tipo TipoUsuario, chavePublicaHex string, cadastro bool) (bool, string, *Usuario, error) {
+	modo := "login"
+	if cadastro {
+		modo = "cadastro"
+	}
+	return autenticarModo(email, senha, tipo, chavePublicaHex, modo)
+}
+
+func autenticarModo(email, senha string, tipo TipoUsuario, chavePublicaHex, modo string) (bool, string, *Usuario, error) {
+	if modo != "legado" && (strings.TrimSpace(email) == "" || strings.TrimSpace(senha) == "" || strings.TrimSpace(chavePublicaHex) == "" || (tipo != TipoMotorista && tipo != TipoPassageiro)) {
+		return false, "Informe e-mail, senha, tipo e carteira válidos.", nil, nil
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 
 	var usuarios []Usuario
 
 	// Carrega os usuários existentes
-	if _, err := os.Stat(ArquivoUsuarios); !os.IsNotExist(err) {
-		dados, err := os.ReadFile(ArquivoUsuarios)
-		if err == nil && len(dados) > 0 {
-			_ = json.Unmarshal(dados, &usuarios)
+	if dados, err := os.ReadFile(ArquivoUsuarios); err == nil {
+		if len(dados) > 0 {
+			if err := json.Unmarshal(dados, &usuarios); err != nil {
+				return false, "Cadastro local inválido.", nil, err
+			}
 		}
+	} else if !os.IsNotExist(err) {
+		return false, "Não foi possível ler os usuários.", nil, err
 	}
 
 	chavePublicaHex = strings.TrimSpace(chavePublicaHex)
@@ -812,6 +843,12 @@ func AutenticarOuCadastrarUsuarioComChave(email, senha string, tipo TipoUsuario,
 	// Procura o usuário cadastrado
 	for i := range usuarios {
 		if usuarios[i].Email == email {
+			if modo == "cadastro" {
+				return false, "Conta já cadastrada. Escolha Entrar.", nil, nil
+			}
+			if modo != "legado" && usuarios[i].Tipo != tipo {
+				return false, "Tipo de conta incompatível.", nil, nil
+			}
 			if usuarios[i].Senha != senha {
 				return false, "Senha incorreta.", nil, nil
 			}
@@ -830,7 +867,10 @@ func AutenticarOuCadastrarUsuarioComChave(email, senha string, tipo TipoUsuario,
 		}
 	}
 
-	// se não encontrou, realiza o cadastro automático no primeiro acesso
+	if modo == "login" {
+		return false, "Conta não encontrada neste servidor. Escolha Criar conta.", nil, nil
+	}
+	// Cadastro explícito (ou compatibilidade de chamadas internas).
 	novoUsuario := Usuario{
 		Email:        email,
 		Senha:        senha,

@@ -32,13 +32,14 @@ func iniciarLedgerDistribuido(mux *http.ServeMux) error {
 	if publica == "" || endereco == "" {
 		return fmt.Errorf("configure VJ_LEDGER_LIDER_PUBLICA, VJ_LEDGER_LIDER_URL e VJ_EMISSORES em todos os servidores")
 	}
-	r := &blockchain.RedeLedger{Cadeia: CadeiaLocal, ID: EmpresaAtualID, LiderID: lider, LiderURL: endereco, LiderPublica: publica, Carteira: CarteiraValidador, Peers: peers}
+	r := &blockchain.RedeLedger{Cadeia: CadeiaLocal, ID: EmpresaAtualID, LiderID: lider, LiderURL: endereco, LiderPublica: publica, Carteira: CarteiraValidador, Peers: peers, AutorizarTransacao: autorizarConclusaoDistribuida}
 	h, err := r.Handler()
 	if err != nil {
 		return err
 	}
 	redeFinanceira = r
 	mux.Handle("/ledger/", h)
+	mux.HandleFunc("/api/ledger/validar-conclusao", handlerValidarConclusao)
 	mux.HandleFunc("/api/ledger/endereco", func(w http.ResponseWriter, q *http.Request) {
 		if q.Method != http.MethodGet {
 			http.Error(w, "método inválido", 405)

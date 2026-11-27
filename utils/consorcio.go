@@ -170,6 +170,7 @@ func loopHeartbeatERecovery() {
 
 	for range ticker.C {
 		verificarPeersHeartbeat()
+		reconciliarEscrowsCancelados()
 		limparTransacoesPreparedExpiradas()
 		sincronizarReservasComPeers()
 	}
@@ -993,6 +994,9 @@ func handler2PCStatus(w http.ResponseWriter, r *http.Request) {
 // CoordenarReserva2PC executa o protocolo Two-Phase Commit completo via requisições REST,
 // gravando de forma descentralizada a reserva em cada servidor participante.
 func CoordenarReserva2PC(passageiroID string, itinerario Itinerario) (*Reserva, error) {
+	return coordenarReserva2PC(passageiroID, itinerario, "", nil)
+}
+func coordenarReserva2PC(passageiroID string, itinerario Itinerario, id string, bloquear func() error) (*Reserva, error) {
 	muCoordenador2PC.Lock()
 	defer muCoordenador2PC.Unlock()
 
@@ -1000,6 +1004,9 @@ func CoordenarReserva2PC(passageiroID string, itinerario Itinerario) (*Reserva, 
 	agora := time.Now().UnixNano()
 	transacaoID := fmt.Sprintf("TX-%s-%d", EmpresaAtualID, agora)
 	reservaID := fmt.Sprintf("RES-%d", agora)
+	if id != "" {
+		reservaID = id
+	}
 
 	for i := range itinerario.Trechos {
 		if itinerario.Trechos[i].ServidorURL == "" {
@@ -1066,6 +1073,12 @@ func CoordenarReserva2PC(passageiroID string, itinerario Itinerario) (*Reserva, 
 		DataCriacao:    time.Now(),
 	}
 
+	if bloquear != nil {
+		if err := bloquear(); err != nil {
+			abortarParticipantes(servidoresPreparados, transacaoID, reservaID)
+			return nil, fmt.Errorf("bloqueio não confirmado para %s: %v; consulte o ledger antes de repetir", reservaID, err)
+		}
+	}
 	// FASE 2: CONFIRMAÇÃO (COMMIT) EM TODOS OS SERVIDORES PARTICIPANTES
 	coordenadorParticipouTrecho := false
 	for _, urlSrv := range servidoresPreparados {
@@ -1081,6 +1094,9 @@ func CoordenarReserva2PC(passageiroID string, itinerario Itinerario) (*Reserva, 
 
 		if !commitOk {
 			abortarParticipantes(servidoresPreparados, transacaoID, reservaID)
+			if bloquear != nil {
+				return nil, fmt.Errorf("falha na confirmação de %s após bloqueio: %s; créditos podem permanecer bloqueados", reservaID, commitMsg)
+			}
 			return nil, fmt.Errorf("reserva cancelada na confirmação: %s", commitMsg)
 		}
 	}

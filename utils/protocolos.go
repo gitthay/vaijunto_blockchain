@@ -2,7 +2,8 @@ package utils
 
 import (
 	"encoding/json"
-	"time"
+	"time"utils2 "vaiJunto/utils"
+
 )
 
 // Data representa estritamente o dia, mês e ano
@@ -16,7 +17,7 @@ type Data struct {
 type Trecho struct {
 	Origem         string    `json:"origem"`
 	Destino        string    `json:"destino"`
-	DataPartida    Data      `json:"data_partida"`    // Aponta exclusivamente para o Dia/Mês/Ano
+	DataPartida    utils2.Data      `json:"data_partida"`    // Aponta exclusivamente para o Dia/Mês/Ano
 	HorarioPartida time.Time `json:"horario_partida"` // Define a hora/minuto da saída
 	HorarioChegada time.Time `json:"horario_chegada"` // Define a hora/minuto da chegada
 	Preco          float64   `json:"preco"`
@@ -35,6 +36,7 @@ type Carona struct {
 // Reserva armazena em cada servidor participante os dados completos APENAS dos seus próprios trechos
 // e somente a referência (carona_id, empresa_id, servidor_url, origem, destino) dos trechos de outros servidores.
 type Reserva struct {
+	Status         string         `json:"status,omitempty"`
 	ID             string         `json:"id"`
 	PassageiroID   string         `json:"passageiro_id"`
 	CoordenadorURL string         `json:"coordenador_url,omitempty"`
@@ -77,6 +79,7 @@ type Transacao2PC struct {
 type TipoAcao string
 
 const (
+	AcaoCadastrar                  TipoAcao = "CADASTRAR"
 	AcaoAutenticar                 TipoAcao = "AUTENTICAR"
 	AcaoPublicarCarona             TipoAcao = "PUBLICAR_CARONA"   //feito
 	AcaoConsultarCaronas           TipoAcao = "CONSULTAR_CARONAS" //feito
@@ -97,16 +100,16 @@ const (
 
 type Usuario struct {
 	Email        string      `json:"email"`
-	Senha        string      `json:"senha"`
-	Tipo         TipoUsuario `json:"tipo"`
-	Endereco     string      `json:"endereco,omitempty"`
+	Senha    string      `json:"senha"`
+	Tipo     TipoUsuario `json:"tipo"`
+	Endereco string      `json:"endereco,omitempty"`
 	ChavePublica string      `json:"chave_publica,omitempty"`
 }
 
 // envelope de dados enviado pelo Cliente ao Servidor.
 type MensagemRequisicao struct {
-	Acao    TipoAcao        `json:"acao"`
-	Usuario string          `json:"usuario"`
+	Acao    TipoAcao `json:"acao"`
+	Usuario string   `json:"usuario"`
 	Payload json.RawMessage `json:"payload"`
 }
 
