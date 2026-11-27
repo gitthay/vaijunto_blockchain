@@ -53,9 +53,10 @@ func enviarRequisicaoTCP(conexao *net.Conn, serverAddr, email, senha string, req
 
 	// Servidor voltou: reautentica automaticamente a sessão do motorista
 	payloadAuth, _ := json.Marshal(map[string]interface{}{
-		"email": email,
-		"senha": senha,
-		"tipo":  utils.TipoMotorista,
+		"email":         email,
+		"senha":         senha,
+		"chave_publica": utils.ChavePublicaDoUsuario(email),
+		"tipo":          utils.TipoMotorista,
 	})
 	reqAuth := utils.MensagemRequisicao{
 		Acao:    utils.AcaoAutenticar,
@@ -144,14 +145,24 @@ func main() {
 
 	// AUTENTICAÇÃO
 	var email, senha string
+	var carteira *utils.Carteira
 	for {
 		email = lerTexto("Digite seu Email: ")
 		senha = lerTexto("Digite sua Senha: ")
 
+		// Carteira Ed25519 local: a chave privada fica nesta máquina (pasta carteiras/)
+		var errCarteira error
+		carteira, errCarteira = utils.CarregarCarteiraDoUsuario(email)
+		if errCarteira != nil {
+			fmt.Printf("\n[ERRO]: não foi possível carregar/criar sua carteira: %v\n\n", errCarteira)
+			continue
+		}
+
 		payloadAuth, _ := json.Marshal(map[string]interface{}{
-			"email": email,
-			"senha": senha,
-			"tipo":  utils.TipoMotorista,
+			"email":         email,
+			"senha":         senha,
+			"chave_publica": utils.ChavePublicaDoUsuario(email),
+			"tipo":          utils.TipoMotorista,
 		})
 
 		reqAuth := utils.MensagemRequisicao{
@@ -183,6 +194,7 @@ func main() {
 		fmt.Println("2. Listar Minhas Caronas")
 		fmt.Println("3. Consultar Passageiros de uma Carona")
 		fmt.Println("4. Cancelar Carona")
+		fmt.Println("5. Carteira de Tokens")
 		fmt.Println("0. Sair")
 		fmt.Println("------------------------------------------")
 
@@ -607,6 +619,10 @@ func main() {
 				}
 			}
 
+		case "5":
+			utils.MenuTokens(email, carteira, func(r utils.MensagemRequisicao) (utils.MensagemResposta, bool) {
+				return enviarRequisicaoTCP(&conexao, *serverAddr, email, senha, r, buf)
+			}, lerTexto)
 		case "0":
 			fmt.Println("Saindo...")
 			return

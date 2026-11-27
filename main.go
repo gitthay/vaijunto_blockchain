@@ -280,6 +280,10 @@ func processarRequisicaoNaFila(req utils.MensagemRequisicao) ResultadoRequisicao
 		}
 
 	default:
+		// Ações de tokens (saldo, recarga, transferência e consulta de endereço)
+		if resposta, tratada := utils.TratarAcaoTokens(req); tratada {
+			return ResultadoRequisicao{Resposta: resposta}
+		}
 		return ResultadoRequisicao{
 			Resposta: utils.MensagemResposta{Sucesso: false, Mensagem: "Ação desconhecida."},
 		}
@@ -396,6 +400,3 @@ func main() {
 		go gerenciarConexao(conn)
 	}
 }
-
-
-

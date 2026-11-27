@@ -123,6 +123,9 @@ func IniciarConsorcio(enderecoHTTP string, listaPeers string) {
 	go loopHeartbeatERecovery()
 
 	mux := ConfigurarRotasConsorcio()
+	if err := iniciarLedgerDistribuido(mux); err != nil {
+		panic(err)
+	}
 	go func() {
 		if err := http.ListenAndServe(enderecoHTTP, mux); err != nil {
 			RegistrarLog("[ERRO REST] Falha ao iniciar servidor HTTP do consórcio em %s: %v", enderecoHTTP, err)
@@ -329,10 +332,10 @@ func handlerDetalheCaronaConsorcio(w http.ResponseWriter, r *http.Request) {
 }
 
 // PreencherDetalhesRemotosReserva percorre os trechos de uma reserva:
-// - Se o trecho for local, garante que os dados locais estejam preenchidos.
-// - Se o trecho pertencer a outro servidor participante, envia apenas reserva_id e carona_id
-//   via GET /api/caronas/detalhe. Se o servidor parceiro responder, preenche origem, destino,
-//   motorista, horários e preço; se estiver OFFLINE, marca tr.ServidorOffline = true.
+//   - Se o trecho for local, garante que os dados locais estejam preenchidos.
+//   - Se o trecho pertencer a outro servidor participante, envia apenas reserva_id e carona_id
+//     via GET /api/caronas/detalhe. Se o servidor parceiro responder, preenche origem, destino,
+//     motorista, horários e preço; se estiver OFFLINE, marca tr.ServidorOffline = true.
 func PreencherDetalhesRemotosReserva(r *Reserva) {
 	mu.Lock()
 	caronasLocais, _ := CarregarCaronas()

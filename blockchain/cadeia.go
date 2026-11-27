@@ -133,6 +133,8 @@ func (bc *Blockchain) AdicionarBloco(bloco Bloco) error {
 
 // Estado retorna a máquina de estado da cadeia (nil se criada sem NovaBlockchainComEstado).
 func (bc *Blockchain) Estado() *Estado {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
 	return bc.estado
 }
 
