@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"vaiJunto/blockchain"
 )
 
 // PeerStatus representa o estado de conectividade de outro servidor do consórcio
@@ -24,6 +26,7 @@ type PeerStatus struct {
 
 var (
 	PeersConsorcio    = make(map[string]*PeerStatus)
+	NoConsensoLocal   *blockchain.NoConsenso
 	muPeers           sync.RWMutex
 	relogioLamport    uint64 = 1
 	muLamport         sync.Mutex
@@ -109,17 +112,48 @@ func ConfigurarPeers(listaPeers string) {
 	}
 }
 
-// IniciarConsorcio sobe o servidor HTTP REST, a rotina de Heartbeat e o coletor/recuperador de transações 2PC
+// IniciarConsorcio sobe o servidor HTTP REST, o nó de consenso da blockchain,
+// a rotina de Heartbeat e o coletor/recuperador de transações 2PC
 func IniciarConsorcio(enderecoHTTP string, listaPeers string) {
 	ConfigurarPeers(listaPeers)
 
-	// Antes de aceitar novas operações, recupera eventuais transações pendentes e reconcilia reservas
+	// Inicializa o nó de consenso BFT da blockchain com os peers configurados (4 empresas -> quórum 3)
+	if CadeiaLocal != nil && CarteiraValidador != nil {
+		muPeers.RLock()
+		urlsPeers := make([]string, 0, len(PeersConsorcio))
+		for u := range PeersConsorcio {
+			urlsPeers = append(urlsPeers, u)
+		}
+		muPeers.RUnlock()
+
+		no, err := blockchain.NovoNoConsenso(blockchain.ConfigConsenso{
+			ValidadorID:      EmpresaAtualID,
+			Carteira:         CarteiraValidador,
+			Cadeia:           CadeiaLocal,
+			Peers:            urlsPeers,
+			TotalValidadores: len(urlsPeers) + 1,
+		})
+		if err != nil {
+			RegistrarLog("[ERRO CONSENSO] Falha ao inicializar nó de consenso: %v", err)
+		} else {
+			NoConsensoLocal = no
+			RegistrarLog("[CONSENSO] Nó %s iniciado (validadores=%d, quorum=%d)",
+				EmpresaAtualID, len(urlsPeers)+1, no.Quorum())
+		}
+	}
+
+	// Antes de aceitar novas operações, recupera eventuais transações pendentes, reconcilia reservas e sincroniza a blockchain
 	go func() {
 		RecuperarTransacoesPendentes()
 		sincronizarReservasComPeers()
+		if NoConsensoLocal != nil {
+			if atualizou, err := NoConsensoLocal.SincronizarComPeers(); err == nil && atualizou {
+				RegistrarLog("[CONSENSO] Blockchain local sincronizada no boot (altura=%d).", CadeiaLocal.Altura())
+			}
+		}
 	}()
 
-	// Rotina de Batimento Cardíaco (Heartbeat), Expiração de PREPARED órfãos e Reconciliação de Reservas/Assentos
+	// Rotina de Batimento Cardíaco (Heartbeat), Expiração de PREPARED órfãos, Reconciliação e Sincronização Blockchain
 	go loopHeartbeatERecovery()
 
 	mux := ConfigurarRotasConsorcio()
@@ -147,6 +181,9 @@ func ConfigurarRotasConsorcio() *http.ServeMux {
 	mux.HandleFunc("/api/reservas/status", handlerStatusReserva)
 	mux.HandleFunc("/api/reservas/liberar", handlerLiberarAssentosReserva)
 	mux.HandleFunc("/api/caronas/cancelada", handlerNotificarCaronaCancelada)
+	if NoConsensoLocal != nil {
+		NoConsensoLocal.RegistrarRotasHTTP(mux)
+	}
 	return mux
 }
 
@@ -172,6 +209,9 @@ func loopHeartbeatERecovery() {
 		verificarPeersHeartbeat()
 		limparTransacoesPreparedExpiradas()
 		sincronizarReservasComPeers()
+		if NoConsensoLocal != nil {
+			_, _ = NoConsensoLocal.SincronizarComPeers()
+		}
 	}
 }
 
